@@ -177,25 +177,37 @@ self.addEventListener('fetch', function(event) {
     // event.respondWith(), using the appropriate cache key.
     if (shouldRespond) {
       var isRangeRequest = event.request.headers.get('range');
-      event.respondWith(
-        caches.open(cacheName).then(function(cache) {
-          return cache.match(urlsToCacheKeys.get(url)).then(function(response) {
-            if (response) {
-              if (isRangeRequest) return handleRangeRequest(event, response);
-              return response;
+      event.respondWith(caches.open(cacheName).then(function (cache) {
+        return cache.match(urlsToCacheKeys.get(url)).then(function (response) {
+          if (isRangeRequest) {
+            // dealing with a ranged request
+            if (!response) {
+              return fetch(event.request).then(function (response) {
+                return handleRangeRequest(event, response)
+              });
             }
-            throw Error('The cached response that was expected is missing.');
+            return handleRangeRequest(event, response);
+          }
+          // non-range request
+          if (response) {
+            // found in cache
+            return response;
+          }
+          // not found in cache
+          return fetch(event.request).then(function (response) {
+            return response;
+          }).catch(function (err) {
+            throw error;
           });
         }).catch(function(e) {
           // Fall back to just fetch()ing the request if some unexpected error
           // prevented the cached response from being valid.
           console.warn('Couldn\'t serve response for "%s" from cache: %O', event.request.url, e);
           return fetch(event.request).then(function (response) {
-            if (isRangeRequest) return handleRangeRequest(event, response);
             return response;
           });
-        })
-      );
+        });
+      }));
     }
   }
 });
