@@ -129,17 +129,20 @@ self.addEventListener('activate', function(event) {
 
 function handleRangeRequest(event, response) {
   var pos = Number(/^bytes\=(\d+)\-$/g.exec(event.request.headers.get('range'))[1]);
-  var ab = response.arrayBuffer();
-  return new Response(
-    ab.slice(pos),
-    {
-      status: 206,
-      statusText: 'Partial Content',
-      headers: [
-        ['Content-Range', 'bytes ' + pos + '-' + (ab.byteLength - 1) + '/' + ab.byteLength]
-      ]
-    }
-  );
+  return response.arrayBuffer().then(function (ab) {
+    console.log(ab.slice(pos))
+    return new Response(
+      ab.slice(pos),
+      {
+        status: 206,
+        statusText: 'Partial Content',
+        headers: [
+          ['Content-Type', 'video/mp4'],
+          ['Content-Range', 'bytes ' + pos + '-' + (ab.byteLength - 1) + '/' + ab.byteLength]
+        ]
+      }
+    );
+  });
 }
 
 self.addEventListener('fetch', function(event) {
@@ -175,39 +178,54 @@ self.addEventListener('fetch', function(event) {
 
     // If shouldRespond was set to true at any point, then call
     // event.respondWith(), using the appropriate cache key.
-    if (shouldRespond) {
-      var isRangeRequest = event.request.headers.get('range');
-      event.respondWith(caches.open(cacheName).then(function (cache) {
-        return cache.match(urlsToCacheKeys.get(url)).then(function (response) {
-          if (isRangeRequest) {
-            // dealing with a ranged request
-            if (!response) {
-              return fetch(event.request).then(function (response) {
-                return handleRangeRequest(event, response)
+    var isRangeRequest = event.request.headers.get('range');
+    if (isRangeRequest) {
+      event.respondWith(
+        caches.open(cacheName)
+          .then(function (cache) {
+            return cache.match(urlsToCacheKeys.get(url))
+              .then(function (response) {
+                // dealing with a ranged request
+                if (!response) {
+                  return fetch(event.request).then(function (response) {
+                    return handleRangeRequest(event, response);
+                  });
+                }
+                return handleRangeRequest(event, response);
+              })
+              .catch(function(e) {
+                // prevented the cached response from being valid.
+                console.warn('Couldn\'t serve response for "%s" from cache: %O', event.request.url, e);
+                return fetch(event.request).then(function (response) {
+                  return response;
+                });
               });
-            }
-            return handleRangeRequest(event, response);
-          }
-          // non-range request
-          if (response) {
-            // found in cache
-            return response;
-          }
-          // not found in cache
-          return fetch(event.request).then(function (response) {
-            return response;
-          }).catch(function (err) {
-            throw error;
-          });
-        }).catch(function(e) {
-          // Fall back to just fetch()ing the request if some unexpected error
-          // prevented the cached response from being valid.
-          console.warn('Couldn\'t serve response for "%s" from cache: %O', event.request.url, e);
-          return fetch(event.request).then(function (response) {
-            return response;
-          });
-        });
-      }));
+          })
+      );
+      return;
+    }
+    if (shouldRespond) {
+      event.respondWith(
+        caches.open(cacheName)
+          .then(function (cache) {
+            return cache.match(urlsToCacheKeys.get(url))
+              .then(function (response) {
+                if (response) return response;
+                return fetch(event.request).then(function (response) {
+                  return response;
+                }).catch(function (err) {
+                  throw error;
+                });
+              })
+              .catch(function(e) {
+                // prevented the cached response from being valid.
+                console.warn('Couldn\'t serve response for "%s" from cache: %O', event.request.url, e);
+                return fetch(event.request).then(function (response) {
+                  return response;
+                });
+              });
+          })
+      );
     }
   }
 });
